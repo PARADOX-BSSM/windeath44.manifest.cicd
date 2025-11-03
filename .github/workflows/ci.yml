@@ -6,7 +6,7 @@ env:
   REGISTRY: docker.io
   OWNER: windeath44 
   DEPLOY_REPO: windeath44/${{}}
-  DEPLOY_PATH: windeath44.manifest.values/${{ github.event.repository.name }}/values.yaml
+  DEPLOY_PATH: windeath44.manifest.values/prod/${{ github.event.repository.name }}/values.yaml
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
