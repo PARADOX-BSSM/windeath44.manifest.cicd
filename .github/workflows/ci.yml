@@ -79,12 +79,25 @@ jobs:
           token: ${{ secrets.PERSONAL_TOKEN }}
           path: values-repo
           ref: master
-      
+          
+      - name: Install yq
+        run: |
+          wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+          chmod +x /usr/local/bin/yq
+          yq --version
+
       - name: Update Helm values
         run: |
           VALUES_PATH="values-repo/${{ inputs.deploy_path_prefix }}/${{ steps.vars.outputs.repo_name }}/values.yaml"
-          yq e -i ".image.tag = \"${{ steps.vars.outputs.tag }}\"" $VALUES_PATH
-      
+          
+          # yq로 이미지 태그만 정확히 업데이트
+          yq eval -i ".image.tag = \"${{ steps.vars.outputs.tag }}\"" $VALUES_PATH
+          
+          # 변경사항 확인
+          echo "Changes made:"
+          cd values-repo
+          git diff      
+          
       - name: Commit and push changes
         run: |
           cd values-repo
@@ -92,4 +105,4 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .
           git commit -m "chore: bump ${{ steps.vars.outputs.repo_name }} image to ${{ steps.vars.outputs.tag }}"
-          git push origin main
+          git push origin master
