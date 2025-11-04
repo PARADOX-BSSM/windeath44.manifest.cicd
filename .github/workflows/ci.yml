@@ -78,6 +78,7 @@ jobs:
           repository: ${{ inputs.deploy_repo }}
           token: ${{ secrets.PERSONAL_TOKEN }}
           path: values-repo
+          ref: master
       
       - name: Update Helm values
         run: |
