@@ -1,12 +1,30 @@
-name: CI/CD (Multi-platform)
+name: Reusable Docker Build & Deploy
+
 on:
-  push:
-    branches: [ master ]
-env:
-  REGISTRY: docker.io
-  OWNER: windeath44 
-  DEPLOY_REPO: PARADOX-BSSM/windeath44.manifest.values  # 수정!
-  
+  workflow_call:
+    inputs:
+      deploy_repo:
+        required: true
+        type: string
+        description: 'Deployment repository (e.g., PARADOX-BSSM/windeath44.manifest.values)'
+      deploy_path_prefix:
+        required: false
+        type: string
+        default: 'prod'
+        description: 'Path prefix for helm values'
+      docker_owner:
+        required: false
+        type: string
+        default: 'windeath44'
+        description: 'Docker Hub username'
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+      PERSONAL_TOKEN:
+        required: true
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -18,8 +36,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
       
-      # --- Docker 환경 설정 ---
-      - name: Set up QEMU (multi-arch build support)
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       
       - name: Set up Docker Buildx
@@ -35,7 +52,6 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       
-      # --- 이미지 태그 생성 ---
       - name: Generate dynamic image tag
         id: vars
         run: |
@@ -43,37 +59,36 @@ jobs:
           SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-7)
           IMAGE_TAG="prod-${TAG_DATE}-${SHORT_SHA}"
           echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          
+          REPO_NAME=$(echo $GITHUB_REPOSITORY | cut -d'/' -f2)
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
       
-      # --- 멀티플랫폼 빌드 및 푸시 ---
       - name: Build and push multi-platform image
         run: |
-          IMAGE=${{ env.OWNER }}/${{ github.event.repository.name }}
+          IMAGE=${{ inputs.docker_owner }}/${{ steps.vars.outputs.repo_name }}
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             -t $IMAGE:${{ steps.vars.outputs.tag }} \
             -t $IMAGE:latest \
             --push .
       
-      # --- 배포 리포지토리 체크아웃 ---
       - name: Checkout values repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.DEPLOY_REPO }}
+          repository: ${{ inputs.deploy_repo }}
           token: ${{ secrets.PERSONAL_TOKEN }}
           path: values-repo
       
-      # --- Helm values 업데이트 ---
-      - name: Update Helm values with new image tag
+      - name: Update Helm values
         run: |
-          VALUES_PATH="values-repo/prod/${{ github.event.repository.name }}/values.yaml"
+          VALUES_PATH="values-repo/${{ inputs.deploy_path_prefix }}/${{ steps.vars.outputs.repo_name }}/values.yaml"
           yq e -i ".image.tag = \"${{ steps.vars.outputs.tag }}\"" $VALUES_PATH
       
-      # --- 커밋 및 푸시 ---
-      - name: Commit and push changes to values repo
+      - name: Commit and push changes
         run: |
           cd values-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add prod/${{ github.event.repository.name }}/values.yaml
-          git commit -m "chore: bump ${{ github.event.repository.name }} image to ${{ steps.vars.outputs.tag }}"
+          git add .
+          git commit -m "chore: bump ${{ steps.vars.outputs.repo_name }} image to ${{ steps.vars.outputs.tag }}"
           git push origin main
