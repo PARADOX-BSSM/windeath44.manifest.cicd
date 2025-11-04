@@ -5,8 +5,8 @@ on:
 env:
   REGISTRY: docker.io
   OWNER: windeath44 
-  DEPLOY_REPO: windeath44/${{}}
-  DEPLOY_PATH: windeath44.manifest.values/prod/${{ github.event.repository.name }}/values.yaml
+  DEPLOY_REPO: PARADOX-BSSM/windeath44.manifest.values  # 수정!
+  
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -17,20 +17,24 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+      
       # --- Docker 환경 설정 ---
       - name: Set up QEMU (multi-arch build support)
         uses: docker/setup-qemu-action@v3
+      
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
           driver-opts: |
             image=moby/buildkit:latest
             network=host
+      
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
       # --- 이미지 태그 생성 ---
       - name: Generate dynamic image tag
         id: vars
@@ -39,6 +43,7 @@ jobs:
           SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-7)
           IMAGE_TAG="prod-${TAG_DATE}-${SHORT_SHA}"
           echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+      
       # --- 멀티플랫폼 빌드 및 푸시 ---
       - name: Build and push multi-platform image
         run: |
@@ -48,24 +53,27 @@ jobs:
             -t $IMAGE:${{ steps.vars.outputs.tag }} \
             -t $IMAGE:latest \
             --push .
+      
       # --- 배포 리포지토리 체크아웃 ---
-      - name: Checkout infra-deploy repository
+      - name: Checkout values repository
         uses: actions/checkout@v4
         with:
           repository: ${{ env.DEPLOY_REPO }}
           token: ${{ secrets.PERSONAL_TOKEN }}
-          path: infra-deploy
+          path: values-repo
+      
       # --- Helm values 업데이트 ---
       - name: Update Helm values with new image tag
         run: |
-          cd infra-deploy
-          yq e -i ".image.tag = \"${{ steps.vars.outputs.tag }}\"" ${{ env.DEPLOY_PATH }}
+          VALUES_PATH="values-repo/prod/${{ github.event.repository.name }}/values.yaml"
+          yq e -i ".image.tag = \"${{ steps.vars.outputs.tag }}\"" $VALUES_PATH
+      
       # --- 커밋 및 푸시 ---
-      - name: Commit and push changes to infra repo
+      - name: Commit and push changes to values repo
         run: |
-          cd infra-deploy
+          cd values-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add ${{ env.DEPLOY_PATH }}
+          git add prod/${{ github.event.repository.name }}/values.yaml
           git commit -m "chore: bump ${{ github.event.repository.name }} image to ${{ steps.vars.outputs.tag }}"
-          git push origin master
+          git push origin main
