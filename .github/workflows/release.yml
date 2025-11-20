@@ -23,17 +23,22 @@ on:
         required: true
 
 jobs:
-
-  ####################################################################
-  # 1) PR 브랜치 감지 Job
-  ####################################################################
-  detect_branch:
+  build-and-deploy:
     runs-on: ubuntu-latest
-    outputs:
-      branch: ${{ steps.pr.outputs.branch }}
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
+
     steps:
+      ####################################################################
+      # 1) 소스 Checkout
+      ####################################################################
       - uses: actions/checkout@v4
 
+      ####################################################################
+      # 2) release-x.x.x 브랜치명 감지
+      ####################################################################
       - name: Detect PR source branch
         id: pr
         uses: actions/github-script@v7
@@ -44,86 +49,67 @@ jobs:
               repo: context.repo.repo,
               commit_sha: context.sha
             });
+
             if (prs.data.length === 0) {
               core.setFailed("No PR found for this commit.");
               return;
             }
+
             core.setOutput("branch", prs.data[0].head.ref);
 
-  ####################################################################
-  # 2) release 브랜치인지 검증 Job
-  ####################################################################
-  validate_release:
-    runs-on: ubuntu-latest
-    needs: detect_branch
-    outputs:
-      version: ${{ steps.setver.outputs.version }}
-      repo_name: ${{ steps.setver.outputs.repo_name }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Validate release branch
+      ####################################################################
+      # 3) release-x.x.x 패턴 확인 + 변수 설정
+      ####################################################################
+      - name: Validate branch & set version variables
+        id: vars
         run: |
-          BRANCH="${{ needs.detect_branch.outputs.branch }}"
+          BRANCH="${{ steps.pr.outputs.branch }}"
+
           if [[ ! "$BRANCH" =~ ^release-[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Not a release branch. Skipping build/deploy."
+            echo "Not a release-x.x.x branch. Skipping deployment."
             exit 0
           fi
 
-      - name: Set version variables
-        id: setver
-        run: |
-          VERSION="${{ needs.detect_branch.outputs.branch }}"
-          REPO_NAME=$(echo $GITHUB_REPOSITORY | cut -d'/' -f2)
+          echo "Detected release branch: $BRANCH"
+
+          VERSION="$BRANCH"
+          REPO_NAME=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f2)
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
 
-
-  ####################################################################
-  # 3) Docker 이미지 빌드 & Push Job
-  ####################################################################
-  build_and_push_image:
-    runs-on: ubuntu-latest
-    needs: validate_release
-    steps:
-      - uses: actions/checkout@v4
-
+      ####################################################################
+      # 4) Docker Buildx 준비
+      ####################################################################
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
-      
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: |
-            image=moby/buildkit:latest
-            network=host
-      
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      ####################################################################
+      # 5) Docker 이미지 Build & Push
+      ####################################################################
       - name: Build and push multi-platform image
         run: |
-          IMAGE=${{ inputs.docker_owner }}/${{ needs.validate_release.outputs.repo_name }}
+          IMAGE="${{ inputs.docker_owner }}/${{ steps.vars.outputs.repo_name }}"
+          TAG="${{ steps.vars.outputs.version }}"
+
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
-            -t $IMAGE:${{ needs.validate_release.outputs.version }} \
-            -t $IMAGE:latest \
+            -t "${IMAGE}:${TAG}" \
+            -t "${IMAGE}:latest" \
             --push .
 
-
-  ####################################################################
-  # 4) GitOps values Repo Checkout Job
-  ####################################################################
-  checkout_values_repo:
-    runs-on: ubuntu-latest
-    needs: build_and_push_image
-
-    outputs:
-      repo_path: values-repo
-    steps:
+      ####################################################################
+      # 6) GitOps values repo Checkout
+      ####################################################################
       - name: Checkout values repository
         uses: actions/checkout@v4
         with:
@@ -132,42 +118,39 @@ jobs:
           path: values-repo
           ref: master
 
-
-  ####################################################################
-  # 5) Helm values 업데이트 Job
-  ####################################################################
-  update_values:
-    runs-on: ubuntu-latest
-    needs: [checkout_values_repo, validate_release]
-
-    steps:
+      ####################################################################
+      # 7) values.yaml 업데이트
+      ####################################################################
       - name: Install yq
         run: |
-          wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+          wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+            -O /usr/local/bin/yq
           chmod +x /usr/local/bin/yq
 
       - name: Update Helm values
         run: |
-          VALUES_PATH="values-repo/${{ inputs.deploy_path_prefix }}/${{ needs.validate_release.outputs.repo_name }}/values.yaml"
-          yq eval -i ".image.tag = \"${{ needs.validate_release.outputs.version }}\"" $VALUES_PATH
+          FILE="values-repo/${{ inputs.deploy_path_prefix }}/${{ steps.vars.outputs.repo_name }}/values.yaml"
 
-          cd values-repo
-          git diff
+          if [[ ! -f "$FILE" ]]; then
+            echo "❌ ERROR: $FILE does not exist"
+            exit 1
+          fi
 
+          yq eval -i ".image.tag = \"${{ steps.vars.outputs.version }}\"" "$FILE"
 
-  ####################################################################
-  # 6) GitOps values Repo Commit & Push Job
-  ####################################################################
-  commit_values:
-    runs-on: ubuntu-latest
-    needs: update_values
+          echo "Updated file:"
+          cat "$FILE"
 
-    steps:
-      - name: Commit and push changes
+      ####################################################################
+      # 8) values repo commit & push
+      ####################################################################
+      - name: Commit and push values update
         run: |
           cd values-repo
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add .
-          git commit -m "chore: bump image to ${{ needs.validate_release.outputs.version }}"
+          git commit -m "release: update image to ${{ steps.vars.outputs.version }}"
           git push origin master
