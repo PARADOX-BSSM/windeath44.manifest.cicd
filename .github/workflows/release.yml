@@ -65,10 +65,11 @@ jobs:
         run: |
           BRANCH="${{ steps.pr.outputs.branch }}"
 
-          if [[ ! "$BRANCH" =~ ^release-[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Not a release-x.x.x branch. Skipping deployment."
+          if [[ ! "$BRANCH" =~ ^release-.*$ ]]; then
+            echo "Not a release-* branch. Skipping deployment."
             exit 0
           fi
+
 
           echo "Detected release branch: $BRANCH"
 
