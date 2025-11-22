@@ -78,7 +78,26 @@ jobs:
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+      
+      - name: Check existing deployed version
+        run: |
+          FILE="values-repo/${{ inputs.deploy_path_prefix }}/${{ steps.vars.outputs.repo_name }}/values.yaml"
 
+          if [[ ! -f "$FILE" ]]; then
+            echo "❌ ERROR: $FILE does not exist"
+            exit 1
+          fi
+
+          CURRENT_VERSION=$(yq eval '.image.tag' "$FILE")
+          NEW_VERSION="${{ steps.vars.outputs.version }}"
+
+          echo "🔍 Current deployed: $CURRENT_VERSION"
+          echo "🆕 New release: $NEW_VERSION"
+
+          if [[ "$CURRENT_VERSION" == "$NEW_VERSION" ]]; then
+            echo "⚠️ Already deployed version detected. Deployment aborted."
+            exit 1
+          fi
       ####################################################################
       # 4) Docker Buildx 준비
       ####################################################################
