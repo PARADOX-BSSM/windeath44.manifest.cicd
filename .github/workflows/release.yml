@@ -78,7 +78,17 @@ jobs:
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
-      
+
+      ####################################################################
+      # 4) GitOps values repo Checkout
+      ####################################################################
+      - name: Checkout values repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.deploy_repo }}
+          token: ${{ secrets.PERSONAL_TOKEN }}
+          path: values-repo
+          ref: master
       - name: Check existing deployed version
         run: |
           FILE="values-repo/${{ inputs.deploy_path_prefix }}/${{ steps.vars.outputs.repo_name }}/values.yaml"
@@ -99,7 +109,7 @@ jobs:
             exit 1
           fi
       ####################################################################
-      # 4) Docker Buildx 준비
+      # 5) Docker Buildx 준비
       ####################################################################
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -114,7 +124,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       ####################################################################
-      # 5) Docker 이미지 Build & Push
+      # 6) Docker 이미지 Build & Push
       ####################################################################
       - name: Build and push multi-platform image
         run: |
@@ -126,17 +136,6 @@ jobs:
             -t "${IMAGE}:${TAG}" \
             -t "${IMAGE}:latest" \
             --push .
-
-      ####################################################################
-      # 6) GitOps values repo Checkout
-      ####################################################################
-      - name: Checkout values repository
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ inputs.deploy_repo }}
-          token: ${{ secrets.PERSONAL_TOKEN }}
-          path: values-repo
-          ref: master
 
       ####################################################################
       # 7) values.yaml 업데이트
