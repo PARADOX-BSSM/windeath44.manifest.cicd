@@ -89,6 +89,7 @@ jobs:
           token: ${{ secrets.PERSONAL_TOKEN }}
           path: values-repo
           ref: master
+          fetch-depth: 0     # ★ 전체 히스토리 가져오기
       - name: Check existing deployed version
         run: |
           FILE="values-repo/${{ inputs.deploy_path_prefix }}/${{ steps.vars.outputs.repo_name }}/values.yaml"
